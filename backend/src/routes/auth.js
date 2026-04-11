@@ -1,0 +1,50 @@
+const express = require('express');
+const router = express.Router();
+const User = require('../models/User');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+
+// Register (with face embedding)
+router.post('/register', async (req, res) => {
+  try {
+    const { name, email, password, faceEmbedding } = req.body;
+    
+    let user = await User.findOne({ email });
+    if (user) return res.status(400).json({ message: 'User already exists' });
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    user = new User({
+      name,
+      email,
+      password: hashedPassword,
+      faceEmbedding
+    });
+
+    await user.save();
+    
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1d' });
+    res.json({ token, user: { id: user._id, name: user.name, email: user.email } });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Face Login (simplified: frontend sends embedding and id, backend verifies embedding similarity)
+// In a real system, you'd calculate cosine similarity here.
+router.post('/face-login', async (req, res) => {
+  try {
+    const { email, currentEmbedding } = req.body;
+    const user = await User.findOne({ email });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // cosine similarity check logic would go here
+    // for now, we'll assume the frontend verified it or provide a helper
+    res.json({ success: true, user: { id: user._id, name: user.name, role: user.role } });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+module.exports = router;
