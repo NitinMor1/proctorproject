@@ -17,7 +17,6 @@ class AppTheme {
       primary: primaryColor,
       secondary: secondaryColor,
       surface: darkCard,
-      background: darkBg,
     ),
     textTheme: GoogleFonts.outfitTextTheme(
       const TextTheme(

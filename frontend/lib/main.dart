@@ -1,10 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/theme.dart';
-import 'features/auth/face_auth_screen.dart';
+import 'features/auth/login_screen.dart';
 import 'features/admin/admin_dashboard.dart';
 
-void main() {
+import 'package:shared_preferences/shared_preferences.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Warm up SharedPreferences cache to prevent disk reads from hanging the app later
+  await SharedPreferences.getInstance();
+
   runApp(
     const ProviderScope(
       child: ProctorApp(),
@@ -49,7 +56,7 @@ class WelcomeScreen extends StatelessWidget {
                 children: [
                    ElevatedButton(
                     onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const FaceAuthScreen()),
+                      MaterialPageRoute(builder: (_) => const LoginScreen()),
                     ),
                     child: const Text('Start Student Exam'),
                   ),

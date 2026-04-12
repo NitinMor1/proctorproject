@@ -77,7 +77,6 @@ class ProctorService extends ChangeNotifier {
   void analyzeFaceLandmarks(FaceData face) {
     // Basic heuristic: check if eyes/nose are significantly off-center
     // In a production app, use head pose estimation
-    final box = face.boundingBox;
     // Assuming face should be roughly in the center of the detection frame
     // This is a placeholder for actual landmark-based orientation logic
   }

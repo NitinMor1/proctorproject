@@ -1,20 +1,97 @@
 import 'package:dio/dio.dart';
-import '../models/user.dart'; // To be created
+import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-class ApiService {
+final apiServiceProvider = Provider<ApiBaseService>((ref) => ApiService());
+
+abstract class ApiBaseService {
+  Future<Response<dynamic>> get(String path, {Map<String, dynamic>? queryParameters});
+  Future<Response<dynamic>> post(String path, {dynamic data, Map<String, dynamic>? queryParameters});
+  Future<Response<dynamic>> patch(String path, {dynamic data, Map<String, dynamic>? queryParameters});
+}
+
+class ApiService implements ApiBaseService {
   final Dio _dio = Dio(BaseOptions(
     baseUrl: 'http://localhost:5000/api', // Adjust for production
     connectTimeout: const Duration(seconds: 5),
     receiveTimeout: const Duration(seconds: 3),
   ));
 
+  SharedPreferences? _prefs;
+
+  ApiService() {
+    _initPrefs();
+    
+    // Add LogInterceptor to print exactly what is being sent and received
+    _dio.interceptors.add(LogInterceptor(
+      request: true,
+      requestHeader: true,
+      requestBody: true,
+      responseHeader: true,
+      responseBody: true,
+      error: true,
+    ));
+
+    _dio.interceptors.add(InterceptorsWrapper(
+      onRequest: (options, handler) async {
+        // Wait for prefs to initialize if not ready yet
+        _prefs ??= await SharedPreferences.getInstance();
+        
+        final token = _prefs!.getString('jwt_token');
+        if (token != null) {
+          options.headers['Authorization'] = 'Bearer $token';
+        }
+        return handler.next(options);
+      },
+    ));
+  }
+
+  Future<void> _initPrefs() async {
+    _prefs = await SharedPreferences.getInstance();
+  }
+
+  @override
+  Future<Response<dynamic>> get(String path, {Map<String, dynamic>? queryParameters}) async {
+    try {
+      return await _dio.get(path, queryParameters: queryParameters);
+    } on DioException catch (e) {
+      throw Exception(_handleError(e));
+    }
+  }
+
+  @override
+  Future<Response<dynamic>> post(String path, {dynamic data, Map<String, dynamic>? queryParameters}) async {
+    try {
+      return await _dio.post(path, data: data, queryParameters: queryParameters);
+    } on DioException catch (e) {
+      throw Exception(_handleError(e));
+    }
+  }
+
+  @override
+  Future<Response<dynamic>> patch(String path, {dynamic data, Map<String, dynamic>? queryParameters}) async {
+    try {
+      return await _dio.patch(path, data: data, queryParameters: queryParameters);
+    } on DioException catch (e) {
+      throw Exception(_handleError(e));
+    }
+  }
+
+  String _handleError(DioException e) {
+    if (e.response != null && e.response?.data is Map) {
+      return e.response?.data['message'] ?? 'Server error occurred: ${e.response?.statusCode}';
+    }
+    return 'Network connection failed: ${e.message}';
+  }
+
   Future<Map<String, dynamic>> faceLogin(String email, List<double> embedding) async {
     try {
-      final response = await _dio.post('/auth/face-login', data: {
+      final response = await post('/auth/face-login', data: {
         'email': email,
         'currentEmbedding': embedding,
       });
-      return response.data;
+      return Map<String, dynamic>.from(response.data as Map);
     } catch (e) {
       throw Exception('Login failed: $e');
     }
@@ -22,11 +99,11 @@ class ApiService {
 
   Future<Map<String, dynamic>> startSession(String studentId, String examId) async {
     try {
-      final response = await _dio.post('/sessions/start', data: {
+      final response = await post('/sessions/start', data: {
         'student': studentId,
         'examId': examId,
       });
-      return response.data;
+      return Map<String, dynamic>.from(response.data as Map);
     } catch (e) {
       throw Exception('Failed to start session: $e');
     }
@@ -34,14 +111,74 @@ class ApiService {
 
   Future<void> logViolation(String sessionId, String studentId, String type, String severity) async {
     try {
-      await _dio.post('/violations', data: {
+      await post('/violations', data: {
         'session': sessionId,
         'student': studentId,
         'type': type,
         'severity': severity,
       });
     } catch (e) {
-      print('Failed to log violation: $e');
+      debugPrint('Failed to log violation: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> createExam({
+    required String title,
+    required String description,
+    required int durationMinutes,
+    required List<Map<String, dynamic>> questions,
+  }) async {
+    try {
+      final response = await post('/exams', data: {
+        'title': title,
+        'description': description,
+        'durationMinutes': durationMinutes,
+        // Optional: you can grab `createdBy` from AuthState and pass it, but for now we let it be optional or fetched separately
+        'questions': questions,
+      });
+      return Map<String, dynamic>.from(response.data as Map);
+    } catch (e) {
+      throw Exception('Failed to create exam: $e');
+    }
+  }
+
+  Future<List<dynamic>> getExams() async {
+    try {
+      final response = await get('/exams');
+      return response.data as List<dynamic>;
+    } catch (e) {
+      throw Exception('Failed to get exams: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> updateExam(String id, {
+    required String title,
+    required String description,
+    required int durationMinutes,
+    required List<Map<String, dynamic>> questions,
+  }) async {
+    try {
+      final response = await _dio.put('/exams/$id', data: {
+        'title': title,
+        'description': description,
+        'durationMinutes': durationMinutes,
+        'questions': questions,
+      });
+      return Map<String, dynamic>.from(response.data as Map);
+    } catch (e) {
+      if (e is DioException) {
+         throw Exception(_handleError(e));
+      }
+      throw Exception('Failed to update exam: $e');
+    }
+  }
+
+  Future<List<dynamic>> getSubmissionsByExam(String examId) async {
+    try {
+      final response = await get('/submissions/exam/$examId');
+      return response.data as List<dynamic>;
+    } catch (e) {
+      throw Exception('Failed to get submissions: $e');
     }
   }
 }
