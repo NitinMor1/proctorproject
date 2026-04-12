@@ -1,5 +1,8 @@
 class ApiEndpoints {
-  static const String baseUrl = "http://localhost:5000/api";
+  static const String baseUrl = String.fromEnvironment(
+    'BASE_URL',
+    defaultValue: "http://localhost:5000/api",
+  );
 
   // Auth Endpoints
   static const String login = "/auth/login";

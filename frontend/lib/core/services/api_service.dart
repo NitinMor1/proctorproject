@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../api/api_endpoints.dart';
 
 final apiServiceProvider = Provider<ApiBaseService>((ref) => ApiService());
 
@@ -13,7 +14,7 @@ abstract class ApiBaseService {
 
 class ApiService implements ApiBaseService {
   final Dio _dio = Dio(BaseOptions(
-    baseUrl: 'http://localhost:5000/api', // Adjust for production
+    baseUrl: ApiEndpoints.baseUrl,
     connectTimeout: const Duration(seconds: 5),
     receiveTimeout: const Duration(seconds: 3),
   ));
