@@ -22,10 +22,10 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// Register (with face embedding)
+// Register (with face embedding for students)
 router.post('/register', async (req, res) => {
   try {
-    const { name, email, password, faceEmbedding } = req.body;
+    const { name, email, password, faceEmbedding, role } = req.body;
     
     let user = await User.findOne({ email });
     if (user) return res.status(400).json({ message: 'User already exists' });
@@ -37,13 +37,14 @@ router.post('/register', async (req, res) => {
       name,
       email,
       password: hashedPassword,
-      faceEmbedding
+      faceEmbedding,
+      role: role && role === 'admin' ? 'admin' : 'student'
     });
 
     await user.save();
     
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1d' });
-    res.json({ token, user: { id: user._id, name: user.name, email: user.email } });
+    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '1d' });
+    res.json({ token, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

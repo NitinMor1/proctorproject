@@ -5,14 +5,12 @@ const Exam = require('../models/Exam');
 // Create Exam (Admin)
 router.post('/', async (req, res) => {
   try {
-    const { title, description, durationMinutes, createdBy, questions } = req.body;
-    
-    // Simple validation (In a production app, verify if 'createdBy' is actually an Admin based on JWT)
+    const { title, description, durationMinutes, createdBy, questions, proctoringRules } = req.body;
+
     if (!title || !durationMinutes || !questions || questions.length === 0) {
       return res.status(400).json({ message: 'Title, duration and at least one question are required' });
     }
 
-    // Generate a random 6-character alphanumeric code
     const examCode = Math.random().toString(36).substring(2, 8).toUpperCase();
 
     const newExam = new Exam({
@@ -21,7 +19,9 @@ router.post('/', async (req, res) => {
       durationMinutes,
       examCode,
       createdBy,
-      questions
+      questions,
+      proctoringRules: proctoringRules || {},
+      status: 'published',
     });
 
     await newExam.save();
@@ -31,7 +31,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Get all Exams (Admin Dashboard lists them)
+// Get all Exams
 router.get('/', async (req, res) => {
   try {
     const exams = await Exam.find().sort({ createdAt: -1 });
@@ -41,46 +41,71 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Get specific Exam by Code (Student enters code to take exam)
+// Get Exam by Code (Student)
 router.get('/code/:code', async (req, res) => {
   try {
-    const exam = await Exam.findOne({ examCode: req.params.code.toUpperCase() });
-    if (!exam) return res.status(404).json({ message: 'Exam not found with that code' });
-    res.json(exam);
+    const exam = await Exam.findOne({ examCode: req.params.code.toUpperCase(), status: 'published' });
+    if (!exam) return res.status(404).json({ message: 'Exam not found or not published' });
+    // Return exam WITHOUT correct answers for students
+    const safeExam = exam.toObject();
+    safeExam.questions = safeExam.questions.map(q => {
+      const { correctAnswerIndex, ...rest } = q;
+      return rest;
+    });
+    res.json(safeExam);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
 
-// Get specific Exam by ID
+// Get Exam by ID (Admin - includes correct answers)
 router.get('/:id', async (req, res) => {
   try {
     const exam = await Exam.findById(req.params.id);
     if (!exam) return res.status(404).json({ message: 'Exam not found' });
-    
-    // To prevent cheating, you could filter out the `correctAnswerIndex` here for students
-    // but for simplicity right now we'll serve the full object.
     res.json(exam);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
 
-// Update (Edit) an existing Exam (Admin)
+// Update Exam (Admin)
 router.put('/:id', async (req, res) => {
   try {
-    const { title, description, durationMinutes, questions } = req.body;
-    
-    // Find and update
+    const { title, description, durationMinutes, questions, proctoringRules } = req.body;
     const updatedExam = await Exam.findByIdAndUpdate(
       req.params.id,
-      { title, description, durationMinutes, questions },
+      { title, description, durationMinutes, questions, proctoringRules },
       { new: true, runValidators: true }
     );
-    
     if (!updatedExam) return res.status(404).json({ message: 'Exam not found' });
-    
     res.json(updatedExam);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Toggle Publish / Draft (Admin)
+router.patch('/:id/status', async (req, res) => {
+  try {
+    const { status } = req.body; // 'published' or 'draft'
+    if (!['published', 'draft'].includes(status)) {
+      return res.status(400).json({ message: 'Status must be published or draft' });
+    }
+    const exam = await Exam.findByIdAndUpdate(req.params.id, { status }, { new: true });
+    if (!exam) return res.status(404).json({ message: 'Exam not found' });
+    res.json(exam);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Delete Exam (Admin)
+router.delete('/:id', async (req, res) => {
+  try {
+    const exam = await Exam.findByIdAndDelete(req.params.id);
+    if (!exam) return res.status(404).json({ message: 'Exam not found' });
+    res.json({ message: 'Exam deleted successfully' });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

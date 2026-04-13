@@ -1,31 +1,93 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:face_recognition_kit/face_recognition_kit.dart';
+import 'package:frontend/core/services/api_service.dart';
 
 enum ViolationType {
   faceNotDetected,
   multipleFaces,
   lookingAway,
   tabSwitch,
+  fullscreenExit,
+}
+
+extension ViolationTypeExt on ViolationType {
+  String get apiKey {
+    switch (this) {
+      case ViolationType.faceNotDetected: return 'FACE_NOT_DETECTED';
+      case ViolationType.multipleFaces:   return 'MULTIPLE_FACES';
+      case ViolationType.lookingAway:     return 'LOOKING_AWAY';
+      case ViolationType.tabSwitch:       return 'TAB_SWITCHED';
+      case ViolationType.fullscreenExit:  return 'FULLSCREEN_EXIT';
+    }
+  }
+
+  String get label {
+    switch (this) {
+      case ViolationType.faceNotDetected: return 'Face not detected';
+      case ViolationType.multipleFaces:   return 'Multiple faces detected';
+      case ViolationType.lookingAway:     return 'Looking away from screen';
+      case ViolationType.tabSwitch:       return 'Tab / app switch';
+      case ViolationType.fullscreenExit:  return 'Fullscreen exited';
+    }
+  }
+
+  int get scorePenalty {
+    switch (this) {
+      case ViolationType.faceNotDetected: return 5;
+      case ViolationType.multipleFaces:   return 15;
+      case ViolationType.lookingAway:     return 3;
+      case ViolationType.tabSwitch:       return 10;
+      case ViolationType.fullscreenExit:  return 5;
+    }
+  }
+
+  String get severity {
+    switch (this) {
+      case ViolationType.multipleFaces:  return 'high';
+      case ViolationType.tabSwitch:      return 'medium';
+      default:                           return 'low';
+    }
+  }
+}
+
+class ViolationEntry {
+  final ViolationType type;
+  final DateTime timestamp;
+  final String? details;
+  ViolationEntry({required this.type, required this.timestamp, this.details});
 }
 
 class ProctorService extends ChangeNotifier {
   int _integrityScore = 100;
   int get integrityScore => _integrityScore;
-  
+
   bool _isMonitoring = false;
   bool get isMonitoring => _isMonitoring;
 
-  final List<String> _violationLog = [];
-  List<String> get violationLog => _violationLog;
+  final List<ViolationEntry> _violations = [];
+  List<ViolationEntry> get violations => List.unmodifiable(_violations);
+
+  // Keep legacy getter for compat
+  List<String> get violationLog => _violations
+      .map((v) => '${v.timestamp.toIso8601String()}: ${v.type.label}')
+      .toList();
 
   Timer? _monitoringTimer;
+  String? _sessionId;
+  ApiBaseService? _api;
+  String? _studentId;
 
-  void startMonitoring() {
-    _isMonitoring = true;
+  void startMonitoring({
+    required String sessionId,
+    required ApiBaseService api,
+    required String studentId,
+  }) {
+    _sessionId     = sessionId;
+    _api           = api;
+    _studentId     = studentId;
+    _isMonitoring  = true;
     _integrityScore = 100;
-    _violationLog.clear();
-    _startTimer();
+    _violations.clear();
     notifyListeners();
   }
 
@@ -35,49 +97,48 @@ class ProctorService extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _startTimer() {
-    _monitoringTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
-      if (!_isMonitoring) return;
-      // Perform automated checks here
-    });
-  }
+  /// Report a violation, apply local score penalty, and POST to backend.
+  void reportViolation(
+    ViolationType type, {
+    String? sessionId,
+    ApiBaseService? api,
+    String? studentId,
+    String? details,
+  }) {
+    final sid  = sessionId ?? _sessionId;
+    final sApi = api ?? _api;
+    final sId  = studentId ?? _studentId;
 
-  void reportViolation(ViolationType type, {String? details}) {
-    int reduction = 0;
-    String message = "";
-
-    switch (type) {
-      case ViolationType.faceNotDetected:
-        reduction = 5;
-        message = "Face not detected";
-        break;
-      case ViolationType.multipleFaces:
-        reduction = 15;
-        message = "Multiple faces detected";
-        break;
-      case ViolationType.lookingAway:
-        reduction = 3;
-        message = "Looking away from screen";
-        break;
-      case ViolationType.tabSwitch:
-        reduction = 10;
-        message = "Tab switch detected";
-        break;
-    }
-
-    _integrityScore = (_integrityScore - reduction).clamp(0, 100);
-    _violationLog.add("${DateTime.now().toIso8601String()}: $message ${details ?? ''}");
+    // Local penalty
+    _integrityScore = (_integrityScore - type.scorePenalty).clamp(0, 100);
+    _violations.add(ViolationEntry(type: type, timestamp: DateTime.now(), details: details));
     notifyListeners();
-    
-    // In a real app, call Backend API here
-    debugPrint("VIOLATION: $message. Current Score: $_integrityScore");
+
+    debugPrint('VIOLATION [${type.apiKey}]: ${type.label}. Score: $_integrityScore');
+
+    // Send to backend (fire and forget)
+    if (sid != null && sApi != null && sId != null) {
+      _postViolation(sApi, sid, sId, type, details);
+    }
   }
 
-  // Heuristic for "Looking Away"
-  void analyzeFaceLandmarks(FaceData face) {
-    // Basic heuristic: check if eyes/nose are significantly off-center
-    // In a production app, use head pose estimation
-    // Assuming face should be roughly in the center of the detection frame
-    // This is a placeholder for actual landmark-based orientation logic
+  Future<void> _postViolation(
+    ApiBaseService api,
+    String sessionId,
+    String studentId,
+    ViolationType type,
+    String? details,
+  ) async {
+    try {
+      await api.post('/violations', data: {
+        'session': sessionId,
+        'student': studentId,
+        'type': type.apiKey,
+        'severity': type.severity,
+        'comment': details ?? type.label,
+      });
+    } catch (e) {
+      debugPrint('Failed to post violation: $e');
+    }
   }
 }

@@ -55,7 +55,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final user = response['user'];
 
       // Save token to SharedPreferences via AuthNotifier
-      await ref.read(authStateProvider.notifier).login(token, user['id'], user['email']);
+      await ref.read(authStateProvider.notifier).login(
+        token, user['id'], user['email'], role: user['role'] ?? 'student');
 
       if (mounted) {
         Navigator.of(context).pushReplacement(

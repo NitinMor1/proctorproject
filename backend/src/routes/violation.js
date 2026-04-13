@@ -30,7 +30,7 @@ router.post('/', async (req, res) => {
         await session.save();
     }
 
-    res.json({ violation, updatedScore: session.integrityScore });
+    res.json({ violation, updatedScore: session ? session.integrityScore : null });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

@@ -10,6 +10,7 @@ abstract class ApiBaseService {
   Future<Response<dynamic>> get(String path, {Map<String, dynamic>? queryParameters});
   Future<Response<dynamic>> post(String path, {dynamic data, Map<String, dynamic>? queryParameters});
   Future<Response<dynamic>> patch(String path, {dynamic data, Map<String, dynamic>? queryParameters});
+  Future<Response<dynamic>> delete(String path);
 }
 
 class ApiService implements ApiBaseService {
@@ -79,6 +80,15 @@ class ApiService implements ApiBaseService {
     }
   }
 
+  @override
+  Future<Response<dynamic>> delete(String path) async {
+    try {
+      return await _dio.delete(path);
+    } on DioException catch (e) {
+      throw Exception(_handleError(e));
+    }
+  }
+
   String _handleError(DioException e) {
     if (e.response != null && e.response?.data is Map) {
       return e.response?.data['message'] ?? 'Server error occurred: ${e.response?.statusCode}';
@@ -128,14 +138,15 @@ class ApiService implements ApiBaseService {
     required String description,
     required int durationMinutes,
     required List<Map<String, dynamic>> questions,
+    Map<String, dynamic>? proctoringRules,
   }) async {
     try {
       final response = await post('/exams', data: {
         'title': title,
         'description': description,
         'durationMinutes': durationMinutes,
-        // Optional: you can grab `createdBy` from AuthState and pass it, but for now we let it be optional or fetched separately
         'questions': questions,
+        if (proctoringRules != null) 'proctoringRules': proctoringRules,
       });
       return Map<String, dynamic>.from(response.data as Map);
     } catch (e) {
@@ -157,6 +168,7 @@ class ApiService implements ApiBaseService {
     required String description,
     required int durationMinutes,
     required List<Map<String, dynamic>> questions,
+    Map<String, dynamic>? proctoringRules,
   }) async {
     try {
       final response = await _dio.put('/exams/$id', data: {
@@ -164,12 +176,11 @@ class ApiService implements ApiBaseService {
         'description': description,
         'durationMinutes': durationMinutes,
         'questions': questions,
+        if (proctoringRules != null) 'proctoringRules': proctoringRules,
       });
       return Map<String, dynamic>.from(response.data as Map);
     } catch (e) {
-      if (e is DioException) {
-         throw Exception(_handleError(e));
-      }
+      if (e is DioException) throw Exception(_handleError(e));
       throw Exception('Failed to update exam: $e');
     }
   }

@@ -19,6 +19,11 @@ class _CreateExamScreenState extends ConsumerState<CreateExamScreen> {
 
   final List<Map<String, dynamic>> _questions = [];
 
+  // Proctoring rules
+  int _maxTabSwitches = 3;
+  bool _faceRequired = true;
+  bool _fullscreenRequired = true;
+
   bool _isLoading = false;
   bool _isEditing = false;
 
@@ -30,7 +35,10 @@ class _CreateExamScreenState extends ConsumerState<CreateExamScreen> {
       _titleController.text = widget.existingExam!['title'] ?? '';
       _descriptionController.text = widget.existingExam!['description'] ?? '';
       _durationController.text = widget.existingExam!['durationMinutes']?.toString() ?? '';
-      
+      final rules = widget.existingExam!['proctoringRules'] as Map? ?? {};
+      _maxTabSwitches = (rules['maxTabSwitches'] as num?)?.toInt() ?? 3;
+      _faceRequired = rules['faceRequired'] ?? true;
+      _fullscreenRequired = rules['fullscreenRequired'] ?? true;
       if (widget.existingExam!['questions'] != null) {
         for (var q in widget.existingExam!['questions']) {
           _questions.add({
@@ -41,7 +49,7 @@ class _CreateExamScreenState extends ConsumerState<CreateExamScreen> {
         }
       }
     } else {
-      _addQuestion(); // Add one implicitly for new exams
+      _addQuestion();
     }
   }
 
@@ -67,16 +75,19 @@ class _CreateExamScreenState extends ConsumerState<CreateExamScreen> {
 
     if (title.isEmpty || durationStr.isEmpty || _questions.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fill title, duration, and add at least one question.')),
-      );
+        const SnackBar(content: Text('Please fill title, duration, and add at least one question.')));
       return;
     }
 
-    setState(() => _isLoading = true);
+    final proctoringRules = {
+      'maxTabSwitches': _maxTabSwitches,
+      'faceRequired': _faceRequired,
+      'fullscreenRequired': _fullscreenRequired,
+    };
 
+    setState(() => _isLoading = true);
     try {
       final api = ref.read(apiServiceProvider) as ApiService;
-      
       if (_isEditing) {
         await api.updateExam(
           widget.existingExam!['_id'],
@@ -84,6 +95,7 @@ class _CreateExamScreenState extends ConsumerState<CreateExamScreen> {
           description: _descriptionController.text.trim(),
           durationMinutes: int.tryParse(durationStr) ?? 60,
           questions: _questions,
+          proctoringRules: proctoringRules,
         );
       } else {
         await api.createExam(
@@ -91,25 +103,18 @@ class _CreateExamScreenState extends ConsumerState<CreateExamScreen> {
           description: _descriptionController.text.trim(),
           durationMinutes: int.tryParse(durationStr) ?? 60,
           questions: _questions,
+          proctoringRules: proctoringRules,
         );
       }
-
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_isEditing ? 'Exam Updated!' : 'Exam Created!')),
-        );
+          SnackBar(content: Text(_isEditing ? 'Exam Updated!' : 'Exam Created & Published!')));
         Navigator.pop(context);
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -165,7 +170,64 @@ class _CreateExamScreenState extends ConsumerState<CreateExamScreen> {
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
-            const SizedBox(height: 32),
+            const SizedBox(height: 28),
+
+            // ── Proctoring Rules ───────────────────────────────────
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: AppTheme.darkCard,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.25)),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Row(children: [
+                  Icon(Icons.security, color: AppTheme.primaryColor, size: 20),
+                  SizedBox(width: 8),
+                  Text('Proctoring Rules',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                ]),
+                const SizedBox(height: 20),
+                // Max tab switches
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  Text('Max Tab Switches: $_maxTabSwitches',
+                    style: const TextStyle(color: AppTheme.textSecondary)),
+                  Text(_maxTabSwitches == 0 ? 'Zero tolerance' : '$_maxTabSwitches allowed',
+                    style: TextStyle(
+                      color: _maxTabSwitches == 0 ? Colors.red : Colors.orange,
+                      fontSize: 12, fontWeight: FontWeight.bold)),
+                ]),
+                Slider(
+                  value: _maxTabSwitches.toDouble(),
+                  min: 0, max: 10, divisions: 10,
+                  activeColor: AppTheme.primaryColor,
+                  onChanged: (v) => setState(() => _maxTabSwitches = v.toInt()),
+                ),
+                const SizedBox(height: 8),
+                // Face required
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  const Text('Require Face Visibility',
+                    style: TextStyle(color: AppTheme.textSecondary)),
+                  Switch(
+                    value: _faceRequired,
+                    activeColor: AppTheme.primaryColor,
+                    onChanged: (v) => setState(() => _faceRequired = v),
+                  ),
+                ]),
+                const SizedBox(height: 4),
+                // Fullscreen required
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  const Text('Require Fullscreen Mode',
+                    style: TextStyle(color: AppTheme.textSecondary)),
+                  Switch(
+                    value: _fullscreenRequired,
+                    activeColor: AppTheme.primaryColor,
+                    onChanged: (v) => setState(() => _fullscreenRequired = v),
+                  ),
+                ]),
+              ]),
+            ),
+            const SizedBox(height: 28),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
