@@ -2,8 +2,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_riverpod/legacy.dart';
 import 'package:camera/camera.dart';
+import 'package:flutter_riverpod/legacy.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:frontend/core/providers/auth_provider.dart';
 import 'package:frontend/core/services/api_service.dart';
 import 'package:frontend/core/services/proctor_service.dart';
@@ -35,22 +36,24 @@ class _ExamScreenState extends ConsumerState<ExamScreen> with WidgetsBindingObse
   CameraController? _camController;
   bool _camReady = false;
 
+  // Data Getters with safe fallback
   List<dynamic> get _questions => widget.examData?['questions'] ?? [];
-  String get _title       => widget.examData?['title'] ?? 'Exam';
-  String get _examId      => widget.examData?['_id'] ?? '';
-  Map<String, dynamic> get _proctoringRules =>
-      Map<String, dynamic>.from((widget.examData?['proctoringRules'] as Map?) ?? {});
-
+  String get _title      => widget.examData?['title'] ?? 'Examination';
+  String get _examId     => widget.examData?['_id'] ?? '';
+  
   @override
   void initState() {
     super.initState();
     _answers = {};
     _secondsRemaining = (widget.examData?['durationMinutes'] ?? 60) * 60;
     WidgetsBinding.instance.addObserver(this);
+    
+    // Debug print to console to help identify data issues
+    debugPrint('ExamScreen Initialized with ${_questions.length} questions');
+    
     _initSession();
     _startTimer();
     _initProctoringCamera();
-    // Request fullscreen on web
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
 
@@ -59,13 +62,15 @@ class _ExamScreenState extends ConsumerState<ExamScreen> with WidgetsBindingObse
       final auth = ref.read(authStateProvider);
       final api  = ref.read(apiServiceProvider) as ApiService;
       if (auth.userId == null || _examId.isEmpty) return;
+      
       final res = await api.post('/sessions/start', data: {
         'student': auth.userId,
         'examId': _examId,
       });
+      
       final sid = res.data['_id'];
       if (mounted) setState(() => _sessionId = sid);
-      // Start proctor service with session
+      
       ref.read(proctorProvider).startMonitoring(
         sessionId: sid,
         api: api,
@@ -78,7 +83,6 @@ class _ExamScreenState extends ConsumerState<ExamScreen> with WidgetsBindingObse
   }
 
   void _startProctoringSync() {
-    // Every 30 seconds, sync integrity score to backend
     _proctoringTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
       if (_sessionId == null) return;
       try {
@@ -157,7 +161,6 @@ class _ExamScreenState extends ConsumerState<ExamScreen> with WidgetsBindingObse
       final api  = ref.read(apiServiceProvider) as ApiService;
       if (auth.userId == null) return;
 
-      // Build answers payload
       final List<Map<String, dynamic>> answersPayload = [];
       for (int i = 0; i < _questions.length; i++) {
         if (_answers.containsKey(i)) {
@@ -168,14 +171,12 @@ class _ExamScreenState extends ConsumerState<ExamScreen> with WidgetsBindingObse
         }
       }
 
-      // End session
       if (_sessionId != null) {
         final score = ref.read(proctorProvider).integrityScore;
         await api.patch('/sessions/$_sessionId/score', data: { 'score': score });
         await api.patch('/sessions/$_sessionId/end');
       }
 
-      // Submit
       final response = await api.post('/submissions', data: {
         'student': auth.userId,
         'exam': _examId,
@@ -193,7 +194,32 @@ class _ExamScreenState extends ConsumerState<ExamScreen> with WidgetsBindingObse
       }
     } catch (e) {
       debugPrint('Submission error: $e');
-      if (mounted) setState(() => _isSubmitting = false);
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: AppTheme.darkCard,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Text('Submission Failed'),
+            content: Text(e.toString().replaceAll('Exception: ', '')),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('OK'),
+              ),
+              if (e.toString().contains('already submitted'))
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    Navigator.of(context).popUntil((r) => r.isFirst);
+                  },
+                  child: const Text('Go Home'),
+                ),
+            ],
+          ),
+        );
+      }
     }
   }
 
@@ -205,168 +231,337 @@ class _ExamScreenState extends ConsumerState<ExamScreen> with WidgetsBindingObse
     return Scaffold(
       backgroundColor: AppTheme.darkBg,
       body: SafeArea(
-        child: Stack(children: [
-          // Background layer with explicitly forced viewport constraints
-          Container(
-            width: MediaQuery.of(context).size.width,
-            height: MediaQuery.of(context).size.height,
-            padding: const EdgeInsets.fromLTRB(28, 28, 28, 16),
-            child: Column(children: [
-              _buildHeader(proctor),
-              
-              if (proctor.integrityScore < 80)
-                Padding(
-                  padding: const EdgeInsets.only(top: 16),
-                  child: _buildWarningBanner(proctor),
+        child: Stack(
+          children: [
+            // Main Content Layer
+            Column(
+              children: [
+                _buildModernHeader(proctor),
+                _buildProgressBar(),
+                Expanded(
+                  child: _questions.isEmpty 
+                    ? _buildEmptyState() 
+                    : _buildQuestionView(),
                 ),
-                
-              const SizedBox(height: 24),
-              if (_questions.isEmpty)
-                const Expanded(child: Center(child: Text('No questions found.', style: TextStyle(color: Colors.white))))
-              else
-                Expanded(child: _buildQuestionArea()),
-              _buildNavFooter(),
-            ]),
-          ),
-
-          // Camera preview pip safely anchored top right
-          Positioned(top: 16, right: 28, child: _buildCameraPip(proctor)),
-        ]),
+                _buildModernFooter(),
+              ],
+            ),
+            
+            // Camera Overlay (Floating)
+            Positioned(
+              top: 70, 
+              right: 20, 
+              child: _buildCameraOverlay(proctor)
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildHeader(ProctorService proctor) {
-    final timeColor = _secondsRemaining < 300 ? Colors.red : AppTheme.secondaryColor;
-    final scoreColor = proctor.integrityScore >= 90 ? Colors.green
-      : proctor.integrityScore >= 70 ? Colors.orange : Colors.red;
-
-    return Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(_title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          overflow: TextOverflow.ellipsis),
-        Row(children: [
-          Icon(Icons.timer, color: timeColor, size: 15),
-          const SizedBox(width: 4),
-          Text(_formatTime(), style: TextStyle(color: timeColor, fontWeight: FontWeight.bold, fontSize: 13)),
-        ]),
-      ])),
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-        decoration: BoxDecoration(
-          color: scoreColor.withValues(alpha:0.12),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: scoreColor.withValues(alpha:0.5)),
-        ),
-        child: Row(children: [
-          Icon(Icons.verified_user, color: scoreColor, size: 16),
-          const SizedBox(width: 6),
-          Text('${proctor.integrityScore}%',
-            style: TextStyle(color: scoreColor, fontWeight: FontWeight.bold, fontSize: 13)),
-        ]),
-      ),
-    ]);
-  }
-
-  Widget _buildQuestionArea() {
-    try {
-      final q = _questions[_currentQuestion];
-      final options = List<String>.from(q['options'] ?? []);
-
-      return Container(
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: AppTheme.darkCard, borderRadius: BorderRadius.circular(24)),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: AppTheme.primaryColor.withValues(alpha:0.15),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text('Q${_currentQuestion + 1} / ${_questions.length}',
-                style: TextStyle(color: AppTheme.primaryColor, fontSize: 12, fontWeight: FontWeight.bold)),
-            ),
-          ]),
-          const SizedBox(height: 16),
+  Widget _buildModernHeader(ProctorService proctor) {
+    final timerColor = _secondsRemaining < 300 ? Colors.red : Colors.white;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
           Expanded(
-            child: SingleChildScrollView(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(q['questionText']?.toString() ?? '',
-                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, height: 1.5, color: Colors.white)),
-                const SizedBox(height: 24),
-                ...List.generate(options.length, (i) {
-                  final isSelected = _answers[_currentQuestion] == i;
-                  return GestureDetector(
-                    onTap: () => setState(() => _answers[_currentQuestion] = i),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      margin: const EdgeInsets.only(bottom: 12),
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: isSelected ? AppTheme.primaryColor.withValues(alpha:0.15) : Colors.transparent,
-                        border: Border.all(
-                          color: isSelected ? AppTheme.primaryColor : Colors.white.withValues(alpha:0.1),
-                          width: isSelected ? 1.5 : 1,
-                        ),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(children: [
-                        CircleAvatar(radius: 14,
-                          backgroundColor: isSelected ? AppTheme.primaryColor : AppTheme.primaryColor.withValues(alpha:0.1),
-                          child: Text(String.fromCharCode(65 + i), style: TextStyle(
-                            color: isSelected ? Colors.white : AppTheme.primaryColor, fontSize: 11))),
-                        const SizedBox(width: 14),
-                        Expanded(child: Text(options[i].toString(), style: const TextStyle(fontSize: 14, color: Colors.white))),
-                      ]),
-                    ),
-                  );
-                }),
-              ]),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_title, 
+                  style: GoogleFonts.outfit(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
+                  overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Icon(Icons.timer_outlined, color: timerColor, size: 16),
+                    const SizedBox(width: 8),
+                    Text(_formatTime(), 
+                      style: GoogleFonts.outfit(color: timerColor, fontWeight: FontWeight.w600, fontSize: 15)),
+                  ],
+                ),
+              ],
             ),
           ),
-        ]),
-      );
-    } catch (e, stack) {
-      return Container(
-        color: Colors.red.shade900,
-        padding: const EdgeInsets.all(20),
-        child: SingleChildScrollView(
-          child: Text('UI Render Error: $e\n\n$stack', style: const TextStyle(color: Colors.white)),
+          _buildIntegrityBadge(proctor.integrityScore),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIntegrityBadge(int score) {
+    final color = score >= 90 ? Colors.green : score >= 70 ? Colors.orange : Colors.red;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.verified_user, color: color, size: 18),
+          const SizedBox(width: 8),
+          Text('$score%', style: GoogleFonts.outfit(color: color, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProgressBar() {
+    double progress = _questions.isEmpty ? 0 : (_answers.length / _questions.length);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+      child: Column(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 8,
+              backgroundColor: Colors.white.withValues(alpha: 0.05),
+              valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.primaryColor),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Text('${_answers.length} of ${_questions.length} answered', 
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuestionView() {
+    try {
+      final q = _questions[_currentQuestion] as Map<String, dynamic>;
+      final questionText = q['questionText'] ?? q['text'] ?? 'No Question Content Available';
+      final options = List<dynamic>.from(q['options'] ?? q['choices'] ?? []);
+
+      return Padding(
+        padding: const EdgeInsets.all(24),
+        child: Container(
+          decoration: BoxDecoration(
+            color: AppTheme.darkCard,
+            borderRadius: BorderRadius.circular(30),
+            boxShadow: [
+              BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 30, offset: const Offset(0, 10))
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Question Header (Q#)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(28, 28, 28, 0),
+                child: Text('QUESTION ${_currentQuestion + 1}', 
+                  style: GoogleFonts.outfit(
+                    color: AppTheme.primaryColor, 
+                    fontWeight: FontWeight.w800, 
+                    letterSpacing: 2, 
+                    fontSize: 13
+                  )),
+              ),
+              
+              // Scrollable Content
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(28),
+                  physics: const BouncingScrollPhysics(),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(questionText, 
+                        style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w600, height: 1.6, color: Colors.white)),
+                      const SizedBox(height: 32),
+                      ...List.generate(options.length, (index) => _buildOption(index, options[index])),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       );
+    } catch (e) {
+      return _buildErrorState(e.toString());
     }
   }
 
-  Widget _buildNavFooter() {
-    final isLast = _currentQuestion == _questions.length - 1;
-    return Padding(
-      padding: const EdgeInsets.only(top: 16),
-      child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        OutlinedButton(
-          onPressed: _currentQuestion > 0 ? () => setState(() => _currentQuestion--) : null,
-          child: const Text('← Previous'),
+  Widget _buildOption(int index, dynamic text) {
+    bool isSelected = _answers[_currentQuestion] == index;
+    return GestureDetector(
+      onTap: () => setState(() => _answers[_currentQuestion] = index),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: isSelected ? AppTheme.primaryColor.withValues(alpha: 0.15) : Colors.white.withValues(alpha: 0.02),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? AppTheme.primaryColor : Colors.white.withValues(alpha: 0.05),
+            width: isSelected ? 2 : 1,
+          ),
         ),
-        Text('${_answers.length}/${_questions.length} answered',
-          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-        isLast
-          ? ElevatedButton(
-              onPressed: _isSubmitting ? null : () => _confirmSubmit(),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.green,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-              child: _isSubmitting
-                ? const SizedBox(height: 18, width: 18,
-                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                : const Text('Submit Exam', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            )
-          : ElevatedButton(
-              onPressed: () => setState(() => _currentQuestion++),
-              style: ElevatedButton.styleFrom(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-              child: const Text('Next →'),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: isSelected ? AppTheme.primaryColor : Colors.transparent,
+                shape: BoxShape.circle,
+                border: Border.all(color: isSelected ? AppTheme.primaryColor : AppTheme.textSecondary),
+              ),
+              child: Center(
+                child: Text(String.fromCharCode(65 + index),
+                  style: TextStyle(
+                    color: isSelected ? Colors.white : AppTheme.textSecondary,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14
+                  )),
+              ),
             ),
-      ]),
+            const SizedBox(width: 20),
+            Expanded(
+              child: Text(text.toString(), 
+                style: TextStyle(
+                  color: isSelected ? Colors.white : AppTheme.textSecondary.withValues(alpha: 0.8),
+                  fontSize: 16,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal
+                )),
+            ),
+            if (isSelected) 
+              const Icon(Icons.check_circle, color: AppTheme.primaryColor, size: 24),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildModernFooter() {
+    bool isLast = _currentQuestion == _questions.length - 1;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+      child: Row(
+        children: [
+          // Previous Button
+          if (_currentQuestion > 0)
+            Expanded(
+              flex: 1,
+              child: OutlinedButton(
+                onPressed: () => setState(() => _currentQuestion--),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(0, 56),
+                  side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+                child: const Text('Previous', style: TextStyle(color: Colors.white)),
+              ),
+            ),
+          
+          if (_currentQuestion > 0) const SizedBox(width: 16),
+
+          // Next / Submit Button
+          Expanded(
+            flex: 2,
+            child: ElevatedButton(
+              onPressed: isLast 
+                ? (_isSubmitting ? null : _confirmSubmit)
+                : () => setState(() => _currentQuestion++),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isLast ? Colors.green : AppTheme.primaryColor,
+                minimumSize: const Size(0, 56),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
+              child: _isSubmitting 
+                ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
+                : Text(isLast ? 'Complete Exam' : 'Next Question', 
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCameraOverlay(ProctorService proctor) {
+    return Container(
+      width: 110,
+      height: 150,
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppTheme.primaryColor, width: 2.5),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.5), blurRadius: 15)],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (_camReady && _camController != null)
+              CameraPreview(_camController!)
+            else
+              const Center(child: Icon(Icons.videocam_off, color: Colors.white24, size: 24)),
+            
+            // Status Indicator
+            Positioned(
+              top: 8,
+              left: 8,
+              child: Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: _camReady ? Colors.green : Colors.red,
+                  shape: BoxShape.circle,
+                  boxShadow: [BoxShadow(color: (_camReady ? Colors.green : Colors.red).withValues(alpha: 0.5), blurRadius: 4, spreadRadius: 1)],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.assignment_late_outlined, size: 80, color: Colors.white.withValues(alpha: 0.1)),
+          const SizedBox(height: 24),
+          const Text('No questions available in this exam.', 
+            style: TextStyle(color: AppTheme.textSecondary, fontSize: 16)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState(String error) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(40.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, size: 64, color: Colors.red),
+            const SizedBox(height: 24),
+            const Text('Data Rendering Error', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            Text(error, textAlign: TextAlign.center, style: const TextStyle(color: AppTheme.textSecondary)),
+          ],
+        ),
+      ),
     );
   }
 
@@ -375,11 +570,11 @@ class _ExamScreenState extends ConsumerState<ExamScreen> with WidgetsBindingObse
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppTheme.darkCard,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('Submit Exam?'),
-        content: Text('You answered ${_answers.length} of ${_questions.length} questions.\nAre you sure?'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text('End Exam?'),
+        content: Text('You have answered ${_answers.length} of ${_questions.length} questions.\nDo you want to submit your final answers?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Review Answers')),
           ElevatedButton(
             onPressed: () { Navigator.pop(ctx); _submitExam(); },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
@@ -396,89 +591,107 @@ class _ExamScreenState extends ConsumerState<ExamScreen> with WidgetsBindingObse
     final color = pct >= 70 ? Colors.green : Colors.orange;
 
     return Scaffold(
-      body: Center(child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(pct >= 70 ? Icons.emoji_events : Icons.info, size: 80, color: color),
-          const SizedBox(height: 24),
-          const Text('Exam Submitted!', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 16),
-          Text('$pct%', style: TextStyle(fontSize: 64, fontWeight: FontWeight.w900, color: color)),
-          Text('$_finalScore out of $max correct', style: TextStyle(color: AppTheme.textSecondary, fontSize: 18)),
-          const SizedBox(height: 20),
-          // Integrity summary
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: AppTheme.darkCard, borderRadius: BorderRadius.circular(16)),
-            child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-              _resultStat('Integrity Score', '${proctor.integrityScore}%',
-                proctor.integrityScore >= 80 ? Colors.green : Colors.red),
-              _resultStat('Violations', '${proctor.violationLog.length}', Colors.orange),
-            ]),
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _buildSuccessIcon(pct),
+              const SizedBox(height: 40),
+              Text('Results Analyzed', style: GoogleFonts.outfit(fontSize: 16, color: AppTheme.textSecondary, letterSpacing: 1)),
+              const SizedBox(height: 8),
+              Text('Exam Submitted Successfully', 
+                textAlign: TextAlign.center,
+                style: GoogleFonts.outfit(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white)),
+              const SizedBox(height: 48),
+              
+              // Score Display
+              Stack(
+                alignment: Alignment.center,
+                children: [
+                  SizedBox(
+                    width: 200,
+                    height: 200,
+                    child: CircularProgressIndicator(
+                      value: pct / 100,
+                      strokeWidth: 12,
+                      backgroundColor: Colors.white.withValues(alpha: 0.05),
+                      valueColor: AlwaysStoppedAnimation<Color>(color),
+                    ),
+                  ),
+                  Column(
+                    children: [
+                      Text('$pct%', style: GoogleFonts.outfit(fontSize: 48, fontWeight: FontWeight.w900, color: color)),
+                      Text('$_finalScore / $max Points', style: const TextStyle(color: AppTheme.textSecondary)),
+                    ],
+                  ),
+                ],
+              ),
+              
+              const SizedBox(height: 48),
+              
+              // Integrity Summary
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: AppTheme.darkCard,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+                ),
+                child: IntrinsicHeight(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _resultStat('Integrity', '${proctor.integrityScore}%', proctor.integrityScore >= 80 ? Colors.green : Colors.red),
+                      VerticalDivider(color: Colors.white.withValues(alpha: 0.1), thickness: 1),
+                      _resultStat('Violations', '${proctor.violationLog.length}', Colors.orange),
+                    ],
+                  ),
+                ),
+              ),
+              
+              const SizedBox(height: 48),
+              
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(context).popUntil((r) => r.isFirst),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryColor,
+                    minimumSize: const Size(0, 60),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                  ),
+                  child: const Text('Return to Home', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 32),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).popUntil((r) => r.isFirst),
-            child: const Text('Return to Home'),
-          ),
-        ]),
-      )),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSuccessIcon(int pct) {
+    return Container(
+      width: 100,
+      height: 100,
+      decoration: BoxDecoration(
+        color: (pct >= 70 ? Colors.green : Colors.orange).withValues(alpha: 0.1),
+        shape: BoxShape.circle,
+      ),
+      child: Icon(pct >= 70 ? Icons.emoji_events_rounded : Icons.check_circle_rounded, 
+        size: 60, color: pct >= 70 ? Colors.green : Colors.orange),
     );
   }
 
   Widget _resultStat(String label, String value, Color color) {
-    return Column(children: [
-      Text(value, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: color)),
-      Text(label, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-    ]);
-  }
-
-  Widget _buildCameraPip(ProctorService proctor) {
-    return Container(
-      width: 140, height: 175,
-      decoration: BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppTheme.primaryColor, width: 2),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.5), blurRadius: 10)],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Stack(fit: StackFit.expand, children: [
-          if (_camReady && _camController != null)
-            CameraPreview(_camController!)
-          else
-            const Center(child: Icon(Icons.videocam, color: Colors.white24, size: 32)),
-          Positioned(bottom: 6, left: 6,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-              decoration: BoxDecoration(
-                color: (_camReady ? Colors.green : Colors.red).withValues(alpha:0.85),
-                borderRadius: BorderRadius.circular(4)),
-              child: Text(_camReady ? 'LIVE' : 'NO CAM',
-                style: const TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.white)),
-            )),
-        ]),
-      ),
-    );
-  }
-
-  Widget _buildWarningBanner(ProctorService proctor) {
-    return Container(
-      margin: const EdgeInsets.only(top: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.red.shade900.withValues(alpha:0.95),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.red.shade700),
-      ),
-      child: Row(children: [
-        const Icon(Icons.warning_amber_rounded, color: Colors.orange),
-        const SizedBox(width: 12),
-        const Expanded(child: Text('Warning: Suspicious behavior detected!',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
-        Text('${proctor.integrityScore}%', style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
-      ]),
+    return Column(
+      children: [
+        Text(value, style: GoogleFonts.outfit(fontSize: 28, fontWeight: FontWeight.bold, color: color)),
+        const SizedBox(height: 4),
+        Text(label, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13, letterSpacing: 0.5)),
+      ],
     );
   }
 }

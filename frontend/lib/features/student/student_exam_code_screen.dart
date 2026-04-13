@@ -31,7 +31,19 @@ class _StudentExamCodeScreenState extends ConsumerState<StudentExamCodeScreen> {
     try {
       final api = ref.read(apiServiceProvider) as ApiService;
       final res = await api.get('/exams/code/$code');
-      setState(() { _examData = Map<String, dynamic>.from(res.data); _step = 1; });
+      final examData = Map<String, dynamic>.from(res.data);
+      
+      // Check for existing submission
+      final userId = ref.read(authStateProvider).userId;
+      if (userId != null) {
+        final alreadySubmitted = await api.checkSubmission(userId, examData['_id']);
+        if (alreadySubmitted) {
+          setState(() => _error = 'You have already submitted this exam.');
+          return;
+        }
+      }
+
+      setState(() { _examData = examData; _step = 1; });
     } catch (e) {
       setState(() => _error = 'Exam not found. Check the code and try again.');
     } finally {

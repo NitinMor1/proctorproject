@@ -11,6 +11,7 @@ abstract class ApiBaseService {
   Future<Response<dynamic>> post(String path, {dynamic data, Map<String, dynamic>? queryParameters});
   Future<Response<dynamic>> patch(String path, {dynamic data, Map<String, dynamic>? queryParameters});
   Future<Response<dynamic>> delete(String path);
+  Future<bool> checkSubmission(String studentId, String examId);
 }
 
 class ApiService implements ApiBaseService {
@@ -191,6 +192,19 @@ class ApiService implements ApiBaseService {
       return response.data as List<dynamic>;
     } catch (e) {
       throw Exception('Failed to get submissions: $e');
+    }
+  }
+
+  @override
+  Future<bool> checkSubmission(String studentId, String examId) async {
+    try {
+      final response = await get('/submissions/check', queryParameters: {
+        'student': studentId,
+        'exam': examId,
+      });
+      return response.data['submitted'] ?? false;
+    } catch (e) {
+      return false;
     }
   }
 }
