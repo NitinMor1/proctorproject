@@ -5,6 +5,18 @@ const Exam = require('../models/Exam');
 const Violation = require('../models/Violation');
 const Session = require('../models/Session');
 
+// Check if already submitted
+router.get('/check', async (req, res) => {
+  try {
+    const { student, exam } = req.query;
+    if (!student || !exam) return res.status(400).json({ message: 'Missing student or exam ID' });
+    const existing = await Submission.findOne({ student, exam });
+    res.json({ submitted: !!existing });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 // Submit Exam (Student)
 router.post('/', async (req, res) => {
   try {
